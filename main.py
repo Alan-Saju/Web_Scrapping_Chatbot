@@ -3,78 +3,116 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 from dotenv import load_dotenv
+import re
 
 class WebsiteChatbot:
     def __init__(self, url, api_key):
-        """
-        Initialize the chatbot with a website URL and Gemini API key
-        
-        Args:
-            url (str): The website URL to scrape
-            api_key (str): Google Gemini API key
-        """
+       
+
         load_dotenv()
         
-        # Configure Gemini API
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
         
-        # Website scraping
-        self.url = url
+        if not url:
+            raise ValueError("URL cannot be empty")
+        if not api_key:
+            raise ValueError("API key cannot be empty")
+        
+        
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-1.0-pro')
+        
+        
+        self.url = self._validate_url(url)
         self.content = self._scrape_website()
     
-    def _scrape_website(self):
-        """
-        Scrape website content and extract text
+    def _validate_url(self, url):
         
-        Returns:
-            str: Cleaned and processed website text
-        """
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+        
+        # Basic URL validation using regex
+        url_pattern = re.compile(
+            r'^https?://'  
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  
+            r'localhost|'  
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  
+
+            r'(?::\d+)?'  
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        
+        if not url_pattern.match(url):
+            raise ValueError(f"Invalid URL format: {url}")
+        
+        return url
+    
+    def _scrape_website(self):
+        
         try:
-            # Fetch website content
-            response = requests.get(self.url)
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            
+            response = requests.get(self.url, headers=headers, timeout=10)
             response.raise_for_status()
             
-            # Parse HTML
+            
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Remove script, style, and navigation elements
-            for script in soup(["script", "style", "nav", "header", "footer"]):
+            
+            for script in soup(["script", "style", "nav", "header", "footer", "iframe", "form"]):
                 script.decompose()
             
-            # Extract text and clean
+            
             text = soup.get_text(separator=' ', strip=True)
             
-            # Limit text to first 10000 characters to avoid API limits
+            
+            text = re.sub(r'\s+', ' ', text)  
+            text = text.replace('\n', ' ')
+            
+            
             return text[:10000]
         
         except requests.RequestException as e:
             print(f"Error fetching website: {e}")
-            return "Unable to fetch website content."
+            return f"Unable to fetch website content. Error: {e}"
+        except Exception as e:
+            print(f"Unexpected error during scraping: {e}")
+            return f"An unexpected error occurred: {e}"
     
     def generate_response(self, query):
-        """
-        Generate a response using Gemini based on website content and user query
         
-        Args:
-            query (str): User's input query
-        
-        Returns:
-            str: Generated response from Gemini
-        """
         try:
-            # Construct prompt with website context
+        
+            if not query or len(query.strip()) == 0:
+                return "Please enter a valid query."
+            
+        
             prompt = f"""
             Context: The following text is from a website: {self.content}
             
             User Query: {query}
             
-            Use the website context to provide a relevant and helpful response.
-            If the context is insufficient, acknowledge that and provide the best possible answer.
+            Instructions:
+            - Use the website context to provide a relevant and helpful response
+            - If the context is insufficient, acknowledge that
+            - Provide the best possible answer based on available information
+            - Be concise and clear in your explanation
             """
             
-            # Generate response
-            response = self.model.generate_content(prompt)
+            
+            generation_config = {
+                'max_output_tokens': 500,  # Limit response length
+                'temperature': 0.7,  # Control randomness
+                'top_p': 0.9  # Control diversity of response
+            }
+            
+            response = self.model.generate_content(
+                prompt, 
+                generation_config=generation_config
+            )
+            
             return response.text
         
         except Exception as e:
@@ -82,32 +120,43 @@ class WebsiteChatbot:
             return "Sorry, I couldn't generate a response at the moment."
 
 def main():
-    # Load API key from environment variable
+   
+    print("\n=== Gemini Website Chatbot ===")
+    print("Explore website content through conversational AI")
+    
     api_key = os.getenv('GEMINI_API_KEY')
     
     if not api_key:
         print("Error: GEMINI_API_KEY not found in .env file")
+        print("Please set up your Gemini API key in the .env file")
         return
     
-    # Specify the URL you want to chat about
-    url = input("Enter the website URL to analyze: ")
-    
-    # Create chatbot instance
-    chatbot = WebsiteChatbot(url, api_key)
-    
-    # Interactive chat loop
-    print("\n=== Website Chatbot ===")
-    print("Type 'exit' to end the conversation")
-    
-    while True:
-        query = input("\nYou: ")
+    try:
+       
+        url = input("Enter the website URL to analyze: ").strip()
         
-        if query.lower() == 'exit':
-            print("Goodbye!")
-            break
         
-        response = chatbot.generate_response(query)
-        print("\nChatbot:", response)
+        chatbot = WebsiteChatbot(url, api_key)
+        
+        
+        print("\nWebsite content loaded successfully!")
+        print("Type 'exit' to end the conversation")
+        
+        while True:
+            query = input("\nYou: ").strip()
+            
+            if query.lower() == 'exit':
+                print("Goodbye! Thank you for using the Website Chatbot.")
+                break
+            
+            
+            response = chatbot.generate_response(query)
+            print("\nChatbot:", response)
+    
+    except ValueError as ve:
+        print(f"Input Error: {ve}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
     main()
